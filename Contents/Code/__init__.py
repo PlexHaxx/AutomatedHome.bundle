@@ -1,134 +1,130 @@
-# PMS plugin framework
-from PMS import *
-from datetime import datetime
-import re, time
+import re
 
 ####################################################################################################
 
-PLUGIN_PREFIX = "/video/automatedhome"
-
-FEED = 'http://gdata.youtube.com/feeds/base/users/automatedhomeuk/uploads'
-
+PLUGIN_PREFIX = '/video/automatedhome'
 NAME          = L('Title')
-
-# make sure to replace artwork with what you want
 ART           = 'art-default.jpg'
 ICON          = 'icon-default.png'
 
+FEED          = 'http://gdata.youtube.com/feeds/base/users/automatedhomeuk/uploads'
+NAMESPACES    = {'a': 'http://www.w3.org/2005/Atom', 'os': 'http://a9.com/-/spec/opensearchrss/1.0/'}
+
+YOUTUBE_VIDEO_FORMATS = ['Standard', 'Medium', 'High', '720p', '1080p']
+YOUTUBE_FMT           = [34, 18, 35, 22, 37]
+USER_AGENT            = 'Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10.6; en-US; rv:1.9.2.12) Gecko/20101026 Firefox/3.6.12'
+
 ####################################################################################################
 
-yt_videoURL         = "http://www.youtube.com/get_video?asv=3&video_id="
 def Start():
-    Plugin.AddPrefixHandler(PLUGIN_PREFIX, Menu, NAME, ICON, ART)
-    Plugin.AddViewGroup("InfoList", viewMode="InfoList", mediaType="items")
-    Plugin.AddViewGroup("List", viewMode="List", mediaType="items")
-    MediaContainer.art = R(ART)
-    MediaContainer.title1 = NAME
-    DirectoryItem.thumb = R(ICON)
+  Plugin.AddPrefixHandler(PLUGIN_PREFIX, MainMenu, NAME, ICON, ART)
+  Plugin.AddViewGroup('InfoList', viewMode='InfoList', mediaType='items')
 
-def Menu():
+  MediaContainer.art = R(ART)
+  MediaContainer.title1 = NAME
+  MediaContainer.viewGroup = 'InfoList'
+  MediaContainer.userAgent = USER_AGENT
 
-    dir = MediaContainer(viewGroup="InfoList",title2=L("Episodes"))
-    dir = parseFeed(FEED,dir)
-    return dir
+  DirectoryItem.thumb = R(ICON)
+  VideoItem.thumb = R(ICON)
 
-def FeedMenu(sender,feed=''):
-    dir = MediaContainer(viewGroup="InfoList",title2=L("Episodes"))
-    dir = parseFeed(feed,dir)
-    return dir
+  HTTP.CacheTime = CACHE_1HOUR
+  HTTP.Headers['User-Agent'] = USER_AGENT
 
-def parseFeed(feed,dir):
-  xml = XML.ElementFromURL(feed,cacheTime=Constants.CACHE_1HOUR)
+####################################################################################################
 
-  count = 1
+def MainMenu():
+  dir = ParseYtFeed(feed=FEED)
+  return dir
 
-  ns = {
-      'a':  'http://www.w3.org/2005/Atom',
-      'os': 'http://a9.com/-/spec/opensearchrss/1.0/',
-  }
+####################################################################################################
 
-  nextUrl = None
+def ParseYtFeed(sender=None, feed=None):
+  cookies = HTTP.GetCookiesForURL('http://www.youtube.com')
+  dir = MediaContainer(title2=L('Episodes'), httpCookies=cookies)
+
+  xml = XML.ElementFromURL(feed, errors='ignore')
+
   try:
-      nextUrl = xml.xpath('//a:link[@rel="next"]',namespaces=ns)[0].get('href')
+    nextUrl = xml.xpath('//a:link[@rel="next"]', namespaces=NAMESPACES)[0].get('href')
   except:
-      pass
+    nextUrl = None
 
-  prevUrl = None
   try:
-      prevUrl = xml.xpath('//a:link[@rel="previous"]',namespaces=ns)[0].get('href')
+    prevUrl = xml.xpath('//a:link[@rel="previous"]', namespaces=NAMESPACES)[0].get('href')
   except:
-      pass
+    prevUrl = None
 
   if prevUrl:
-      dir.Append(Function(DirectoryItem(FeedMenu,title=L('Previous Page')),feed=prevUrl))
+    dir.Append(Function(DirectoryItem(ParseYtFeed, title=L('Previous Page')), feed=prevUrl))
 
-  for e in xml.xpath('//a:entry',namespaces=ns):
-
+  for e in xml.xpath('//a:entry', namespaces=NAMESPACES):
+    try:
+      date = re.sub('T.*', '', e.xpath('.//a:published/text()', namespaces=NAMESPACES)[0])
+    except:
       date = ''
-      try:
-          date = re.sub('T.*','',e.xpath('.//a:published/text()',namespaces=ns)[0])
-      except:
-          pass
 
+    url = e.xpath('.//a:link[@rel="alternate"]', namespaces=NAMESPACES)[0].get('href')
+    title = e.xpath('.//a:title/text()', namespaces=NAMESPACES)[0]
 
-      url = e.xpath('.//a:link[@rel="alternate"]',namespaces=ns)[0].get('href')
-      title = e.xpath('.//a:title/text()',namespaces=ns)[0]
+    summary_html = e.xpath('.//a:content/text()', namespaces=NAMESPACES)[0]
+    summary_xml = HTML.ElementFromString(summary_html)
 
-      summary_html = e.xpath('.//a:content/text()',namespaces=ns)[0]
-      summary_xml = XML.ElementFromString(summary_html, isHTML=True)
-
+    try:
+      thumb = summary_xml.xpath('//img')[0].get('src')
+      thumb = re.sub(r'/default.jpg','/hqdefault.jpg',thumb)
+    except:
       thumb = R(ICON)
-      try:
-          thumb = summary_xml.xpath('//img')[0].get('src')
-          thumb = re.sub(r'/default.jpg','/hqdefault.jpg',thumb)
-      except:
-          pass
 
+    try:
+      summary = summary_xml.xpath('//span')[0].text
+    except:
       summary = ''
-      try:
-          summary = summary_xml.xpath('//span')[0].text
-      except:
-          pass
 
-      duration = 0
-      try:
-        dur_parts = summary_xml.xpath('//span')[-2].text.split(':')
-        dur_parts.reverse()
-        i = 0
-        for p in dur_parts:
-            duration = duration + int(p)*(60**i)
-            i = i + 1
+    try:
+      dur_parts = summary_xml.xpath('//span')[-2].text.split(':')
+      dur_parts.reverse()
+      i = 0
+      for p in dur_parts:
+        duration = duration + int(p)*(60**i)
+        i = i + 1
         duration = duration * 1000
-      except:
-          pass
+    except:
+      duration = None
 
-      e = {
-        'url': '%s' % url,
-        'title': '%s' % title,
-        'summary': '%s' % summary,
-        'duration': '%s' % duration,
-        'thumb': '%s' % thumb,
-        'subtitle': '%s' % date,
-      }
-
-      dir.Append(Function(VideoItem(VidRedirect, title=e['title'], summary=e['summary'], duration=e['duration'], thumb=e['thumb'], subtitle=e['subtitle']),url=e['url']))
+    dir.Append(Function(VideoItem(VidRedirect, title=title, subtitle=date, summary=summary, duration=duration, thumb=thumb), url=url))
 
   if nextUrl:
-      dir.Append(Function(DirectoryItem(FeedMenu,title=L('Next Page')),feed=nextUrl))
+    dir.Append(Function(DirectoryItem(ParseYtFeed, title=L('Next Page')), feed=nextUrl))
 
   return dir
 
-def VidRedirect(sender,url=''):
+####################################################################################################
 
-    ytPage = HTTP.Request(url)
-    
-    t = re.findall('"t": "([^"]+)"', ytPage)[0]
-    v = re.findall("'VIDEO_ID': '([^']+)'", ytPage)[0] #
-    hd = re.findall("'IS_HD_AVAILABLE': ([^,]+),", ytPage)[0] #
+def VidRedirect(sender, url):
+  yt_page = HTTP.Request(url, cacheTime=1).content
 
-    fmt = "18"
-    if hd == "true":
-      fmt = "22"
-      
-    u = yt_videoURL + v + "&t=" + t + "&fmt=" + fmt
-    return Redirect(u)
+  fmt_url_map = re.findall('"fmt_url_map".+?"([^"]+)', yt_page)[0]
+  fmt_url_map = fmt_url_map.replace('\/', '/').split(',')
+
+  fmts = []
+  fmts_info = {}
+
+  for f in fmt_url_map:
+    (fmt, url) = f.split('|')
+    fmts.append(fmt)
+    fmts_info[str(fmt)] = url
+
+  index = YOUTUBE_VIDEO_FORMATS.index(Prefs['youtube_fmt'])
+  if YOUTUBE_FMT[index] in fmts:
+    fmt = YOUTUBE_FMT[index]
+  else:
+    for i in reversed( range(0, index+1) ):
+      if str(YOUTUBE_FMT[i]) in fmts:
+        fmt = YOUTUBE_FMT[i]
+        break
+      else:
+        fmt = 5
+
+  url = fmts_info[str(fmt)]
+  return Redirect(url)
