@@ -126,5 +126,5 @@ def VidRedirect(sender, url):
       else:
         fmt = 5
 
-  url = fmts_info[str(fmt)]
+  url = fmts_info[str(fmt)].decode('unicode_escape')
   return Redirect(url)
