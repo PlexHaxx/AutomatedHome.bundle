@@ -10,38 +10,33 @@ ICON          = 'icon-default.png'
 FEED          = 'http://gdata.youtube.com/feeds/base/users/automatedhomeuk/uploads'
 NAMESPACES    = {'a': 'http://www.w3.org/2005/Atom', 'os': 'http://a9.com/-/spec/opensearchrss/1.0/'}
 
-YOUTUBE_VIDEO_FORMATS = ['Standard', 'Medium', 'High', '720p', '1080p']
-YOUTUBE_FMT           = [34, 18, 35, 22, 37]
-USER_AGENT            = 'Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10.6; en-US; rv:1.9.2.12) Gecko/20101026 Firefox/3.6.12'
-
 ####################################################################################################
 
 def Start():
   Plugin.AddPrefixHandler(PLUGIN_PREFIX, MainMenu, NAME, ICON, ART)
   Plugin.AddViewGroup('InfoList', viewMode='InfoList', mediaType='items')
 
-  MediaContainer.art = R(ART)
-  MediaContainer.title1 = NAME
-  MediaContainer.viewGroup = 'InfoList'
-  MediaContainer.userAgent = USER_AGENT
+  ObjectContainer.title1 = NAME
+  ObjectContainer.view_group = 'InfoList'
+  ObjectContainer.art = R(ART)
 
-  DirectoryItem.thumb = R(ICON)
-  VideoItem.thumb = R(ICON)
+  DirectoryObject.thumb = R(ICON)
+  DirectoryObject.art = R(ART)
+  VideoClipObject.thumb = R(ICON)
+  VideoClipObject.art = R(ART)
 
   HTTP.CacheTime = CACHE_1HOUR
-  HTTP.Headers['User-Agent'] = USER_AGENT
 
 ####################################################################################################
 
 def MainMenu():
-  dir = ParseYtFeed(feed=FEED)
-  return dir
+  oc = ParseYtFeed(feed = FEED)
+  return oc
 
 ####################################################################################################
 
-def ParseYtFeed(sender=None, feed=None):
-  cookies = HTTP.GetCookiesForURL('http://www.youtube.com')
-  dir = MediaContainer(title2=L('Episodes'), httpCookies=cookies)
+def ParseYtFeed(feed=None):
+  oc = ObjectContainer(title2=L('Episodes'))
 
   xml = XML.ElementFromURL(feed, errors='ignore')
 
@@ -50,19 +45,12 @@ def ParseYtFeed(sender=None, feed=None):
   except:
     nextUrl = None
 
-  try:
-    prevUrl = xml.xpath('//a:link[@rel="previous"]', namespaces=NAMESPACES)[0].get('href')
-  except:
-    prevUrl = None
-
-  if prevUrl:
-    dir.Append(Function(DirectoryItem(ParseYtFeed, title=L('Previous Page')), feed=prevUrl))
-
   for e in xml.xpath('//a:entry', namespaces=NAMESPACES):
     try:
       date = re.sub('T.*', '', e.xpath('.//a:published/text()', namespaces=NAMESPACES)[0])
+      date = Datetime.ParseDate(date)
     except:
-      date = ''
+      date = None
 
     url = e.xpath('.//a:link[@rel="alternate"]', namespaces=NAMESPACES)[0].get('href')
     title = e.xpath('.//a:title/text()', namespaces=NAMESPACES)[0]
@@ -92,39 +80,14 @@ def ParseYtFeed(sender=None, feed=None):
     except:
       duration = None
 
-    dir.Append(Function(VideoItem(VidRedirect, title=title, subtitle=date, summary=summary, duration=duration, thumb=thumb), url=url))
+    oc.add(VideoClipObject(
+      url = url,
+      title = title,
+      summary = summary,
+      thumb = thumb,
+      duration = duration))
 
   if nextUrl:
-    dir.Append(Function(DirectoryItem(ParseYtFeed, title=L('Next Page')), feed=nextUrl))
+    oc.add(DirectoryObject(key = Callback(ParseYtFeed, feed = nextUrl), title = L('Next Page')))
 
-  return dir
-
-####################################################################################################
-
-def VidRedirect(sender, url):
-  yt_page = HTTP.Request(url, cacheTime=1).content
-
-  fmt_url_map = re.findall('"fmt_url_map".+?"([^"]+)', yt_page)[0]
-  fmt_url_map = fmt_url_map.replace('\/', '/').split(',')
-
-  fmts = []
-  fmts_info = {}
-
-  for f in fmt_url_map:
-    (fmt, url) = f.split('|')
-    fmts.append(fmt)
-    fmts_info[str(fmt)] = url
-
-  index = YOUTUBE_VIDEO_FORMATS.index(Prefs['youtube_fmt'])
-  if YOUTUBE_FMT[index] in fmts:
-    fmt = YOUTUBE_FMT[index]
-  else:
-    for i in reversed( range(0, index+1) ):
-      if str(YOUTUBE_FMT[i]) in fmts:
-        fmt = YOUTUBE_FMT[i]
-        break
-      else:
-        fmt = 5
-
-  url = fmts_info[str(fmt)].decode('unicode_escape')
-  return Redirect(url)
+  return oc
